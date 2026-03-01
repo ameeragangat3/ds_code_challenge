@@ -147,31 +147,6 @@ def load_schema(schema_path: str):
 schema_path="schemas/hex_schema.json"
 hex_schema = load_schema(schema_path)
 
-"""
-hex_schema = {
-    "collection_rules": {
-      "type_must_be": "FeatureCollection",
-      "features_key_required": True
-    },
-    "feature_rules": {
-      "feature_type_must_be": "Feature",
-      "geometry_required": True,
-      "properties_required": True
-    },
-    "geometry_rules": {
-      "geometry_type_must_be": "Polygon",
-      "coordinates_required": True,
-      "coordinates_min_length": 4
-    },
-    "property_rules": {
-      "resolution_required": True,
-      "resolution_type": "int",
-      "resolution_must_equal": 8,
-      "index_required": True,
-      "index_type": "str"
-    }
-}
-"""
 # created geojson of extracted features
 geojson_data = {
     "type": "FeatureCollection",
@@ -185,9 +160,7 @@ total_rule_checks = 0
 total_rule_failures = 0
 failure_breakdown = {}
 
-# -------------------------
 # Collection-level checks
-# -------------------------
 total_rule_checks += 1
 if geojson_data.get("type") != hex_schema["collection_rules"]["type_must_be"]:
     total_rule_failures += 1
@@ -204,9 +177,8 @@ if not isinstance(features, list):
         failure_breakdown.get("features_not_list", 0) + 1
     )
 
-# -------------------------
+
 # Feature-level checks
-# -------------------------
 for feature in features:
 
     # Feature type rule
