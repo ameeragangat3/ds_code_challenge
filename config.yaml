@@ -1,1 +1,1 @@
-validation:  conformance_threshold: 0.95spatial_assignment:  failure_threshold: 0.02
+validation:  conformance_threshold: 0.95spatial_assignment:  failure_threshold: 0.02subsample:  radius_km: 1.852  wind_enrichment:  max_retries: 3  backoff_factor: 2  
