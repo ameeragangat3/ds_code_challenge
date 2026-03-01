@@ -16,6 +16,7 @@ import requests
 import time
 from pathlib import Path
 import time
+import sys
 
 start = time.time()
 
@@ -136,4 +137,192 @@ if not sets_match:
     )
 else:
     print(f"extracted AWS data matches and validated against {VALIDATION_FILE}")
+
+
+
+#% Validate against schema of rules
+
+hex_schema = {
+    "collection_rules": {
+      "type_must_be": "FeatureCollection",
+      "features_key_required": True
+    },
+    "feature_rules": {
+      "feature_type_must_be": "Feature",
+      "geometry_required": True,
+      "properties_required": True
+    },
+    "geometry_rules": {
+      "geometry_type_must_be": "Polygon",
+      "coordinates_required": True,
+      "coordinates_min_length": 4
+    },
+    "property_rules": {
+      "resolution_required": True,
+      "resolution_type": "int",
+      "resolution_must_equal": 8,
+      "index_required": True,
+      "index_type": "str"
+    }
+}
+
+# created geojson of extracted features
+geojson_data = {
+    "type": "FeatureCollection",
+    "features": features
+}
+
+
+#%
+
+total_rule_checks = 0
+total_rule_failures = 0
+failure_breakdown = {}
+
+# -------------------------
+# Collection-level checks
+# -------------------------
+total_rule_checks += 1
+if geojson_data.get("type") != hex_schema["collection_rules"]["type_must_be"]:
+    total_rule_failures += 1
+    failure_breakdown["collection_type_mismatch"] = (
+        failure_breakdown.get("collection_type_mismatch", 0) + 1
+    )
+
+features = geojson_data.get("features", [])
+
+total_rule_checks += 1
+if not isinstance(features, list):
+    total_rule_failures += 1
+    failure_breakdown["features_not_list"] = (
+        failure_breakdown.get("features_not_list", 0) + 1
+    )
+
+# -------------------------
+# Feature-level checks
+# -------------------------
+for feature in features:
+
+    # Feature type rule
+    total_rule_checks += 1
+    if feature.get("type") != hex_schema["feature_rules"]["feature_type_must_be"]:
+        total_rule_failures += 1
+        failure_breakdown["feature_type_invalid"] = (
+            failure_breakdown.get("feature_type_invalid", 0) + 1
+        )
+
+    # Geometry existence rule
+    total_rule_checks += 1
+    geometry = feature.get("geometry")
+    if geometry is None:
+        total_rule_failures += 1
+        failure_breakdown["geometry_missing"] = (
+            failure_breakdown.get("geometry_missing", 0) + 1
+        )
+        continue
+
+    # Geometry type rule
+    total_rule_checks += 1
+    if geometry.get("type") != hex_schema["geometry_rules"]["geometry_type_must_be"]:
+        total_rule_failures += 1
+        failure_breakdown["geometry_type_invalid"] = (
+            failure_breakdown.get("geometry_type_invalid", 0) + 1
+        )
+
+    # Coordinates existence rule
+    total_rule_checks += 1
+    coordinates = geometry.get("coordinates")
+    if not coordinates:
+        total_rule_failures += 1
+        failure_breakdown["coordinates_missing"] = (
+            failure_breakdown.get("coordinates_missing", 0) + 1
+        )
+
+    # Minimum coordinate length rule
+    total_rule_checks += 1
+    try:
+        if len(coordinates[0]) < hex_schema["geometry_rules"]["coordinates_min_length"]:
+            total_rule_failures += 1
+            failure_breakdown["coordinates_too_short"] = (
+                failure_breakdown.get("coordinates_too_short", 0) + 1
+            )
+    except Exception:
+        total_rule_failures += 1
+        failure_breakdown["coordinates_structure_invalid"] = (
+            failure_breakdown.get("coordinates_structure_invalid", 0) + 1
+        )
+
+    # Properties existence rule
+    total_rule_checks += 1
+    properties = feature.get("properties")
+    if properties is None:
+        total_rule_failures += 1
+        failure_breakdown["properties_missing"] = (
+            failure_breakdown.get("properties_missing", 0) + 1
+        )
+        continue
+
+    # Resolution existence rule
+    total_rule_checks += 1
+    resolution = properties.get("resolution")
+    if resolution is None:
+        total_rule_failures += 1
+        failure_breakdown["resolution_missing"] = (
+            failure_breakdown.get("resolution_missing", 0) + 1
+        )
+
+    # Resolution type rule
+    total_rule_checks += 1
+    if not isinstance(resolution, int):
+        total_rule_failures += 1
+        failure_breakdown["resolution_type_invalid"] = (
+            failure_breakdown.get("resolution_type_invalid", 0) + 1
+        )
+
+    # Resolution equals 8 rule
+    total_rule_checks += 1
+    if resolution != hex_schema["property_rules"]["resolution_must_equal"]:
+        total_rule_failures += 1
+        failure_breakdown["resolution_value_invalid"] = (
+            failure_breakdown.get("resolution_value_invalid", 0) + 1
+        )
+
+    # Index existence rule (UPDATED)
+    total_rule_checks += 1
+    hex_index = properties.get("index")
+    if hex_index is None:
+        total_rule_failures += 1
+        failure_breakdown["index_missing"] = (
+            failure_breakdown.get("index_missing", 0) + 1
+        )
+
+    # Index type rule (UPDATED)
+    total_rule_checks += 1
+    if not isinstance(hex_index, str):
+        total_rule_failures += 1
+        failure_breakdown["index_type_invalid"] = (
+            failure_breakdown.get("index_type_invalid", 0) + 1
+        )
+
+total_features = len(features)
+
+conformance_score = (
+    (total_rule_checks - total_rule_failures) / total_rule_checks
+    if total_rule_checks > 0
+    else 0
+)
+
+conformance_score=round(conformance_score, 5)
+
+validation_conformance_threshold = 0.95
+
+if conformance_score < validation_conformance_threshold:
+    print("Validation failed threshold")
+    sys.exit(1)
+else: 
+    print("Validation passed threshold")
+
+runtime = round(time.time() - start, 3)
+
+print(f"extraction and validation took {runtime} seconds")
 
