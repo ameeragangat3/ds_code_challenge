@@ -15,7 +15,6 @@ import json
 import requests
 import time
 from pathlib import Path
-import time
 import sys
 
 start = time.time()
@@ -141,7 +140,14 @@ else:
 
 
 #% Validate against schema of rules
+def load_schema(schema_path: str):
+    with open(Path(schema_path), "r") as f:
+        return json.load(f)
 
+schema_path="schemas/hex_schema.json"
+hex_schema = load_schema(schema_path)
+
+"""
 hex_schema = {
     "collection_rules": {
       "type_must_be": "FeatureCollection",
@@ -165,7 +171,7 @@ hex_schema = {
       "index_type": "str"
     }
 }
-
+"""
 # created geojson of extracted features
 geojson_data = {
     "type": "FeatureCollection",
@@ -317,10 +323,10 @@ conformance_score=round(conformance_score, 5)
 validation_conformance_threshold = 0.95
 
 if conformance_score < validation_conformance_threshold:
-    print("Validation failed threshold")
+    print(f"Validation failed threshold, conformance score {conformance_score}")
     sys.exit(1)
 else: 
-    print("Validation passed threshold")
+    print(f"Validation passed threshold, conformance score {conformance_score}")
 
 runtime = round(time.time() - start, 3)
 
