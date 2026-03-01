@@ -251,6 +251,55 @@ def anonymise_dataset(df: pd.DataFrame, review_output_path: str = "data/manual_r
 
     return anonymised_df
 
+def apply_k_anonymity_filter(
+    df: pd.DataFrame,
+    spatial_col: str,
+    time_col: str,
+    k: int = 3
+):
+    """
+    Enforce k-anonymity based on:
+    - computed_h3_index (spatial)
+
+    Records belonging to groups smaller than k
+    are removed and exported for manual review.
+    """
+
+    logger.info(f"K-anonymity stage initiated | k={k}")
+
+    # Count group sizes
+    group_counts = (
+        df
+        .groupby(["h3_level8_index"])
+        .size()
+        .reset_index(name="group_size")
+    )
+
+    # Merge group sizes back
+    df = df.merge(
+        group_counts,
+        on=["h3_level8_index"],
+        how="left"
+    )
+
+    # Identify unsafe records
+    unsafe_mask = df["group_size"] < k
+
+    manual_review_df = df[unsafe_mask].copy()
+    final_df = df[~unsafe_mask].copy()
+
+    # Drop helper column
+    final_df = final_df.drop(columns=["group_size"])
+    manual_review_df = manual_review_df.drop(columns=["group_size"])
+
+    logger.info(
+        f"K-anonymity report | "
+        f"total_records={len(df)} | "
+        f"released_records={len(final_df)} | "
+        f"flagged_for_review={len(manual_review_df)}"
+    )
+    return final_df, manual_review_df
+
 #%%
 def main():
     logger.info("Computing Atlantis centroid from OSM boundary")
@@ -334,18 +383,37 @@ def main():
     # -------------------------------------------------
     logger.info("Anonymisation stage initiated")
     
+    # Ensure output directory exists at project root
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+        
+    enriched_df.to_csv(f"{output_dir}/full_dataset_manual_review.csv", index=False)
+    
     anonymised_df = anonymise_dataset(
     enriched_df,
-    review_output_path="data/manual_review.csv"
+    review_output_path=f"{output_dir}/removed_columns_manual_review.csv"
     )
 
-    logger.info("Manual review file created at data/manual_review.csv")
+    logger.info(f"Manual review file created at {output_dir}/removed_columns_manual_review.csv")
     
     logger.info(
         f"Anonymisation completed | "
         f"final_columns={list(anonymised_df.columns)}"
     )    
     
+    # Apply k-anonymity
+    final_df, manual_review_df = apply_k_anonymity_filter(
+        enriched_df,
+        spatial_col="h3_level8_index",
+        time_col="creation_timestamp",
+        k=3
+    )
+    
+    # Save outputs
+    final_df.to_csv(f"{output_dir}/final_anonymised_dataset.csv", index=False)
+    manual_review_df.to_csv(f"{output_dir}/manual_review_high_risk_records.csv", index=False)
+    
+    logger.info("Anonymisation completed and files exported")
     
 if __name__ == "__main__":
     main()
