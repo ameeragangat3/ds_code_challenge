@@ -1,0 +1,1 @@
+validation:  conformance_threshold: 0.95spatial_assignment:  failure_threshold: 0.02
