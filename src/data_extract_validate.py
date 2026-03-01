@@ -178,6 +178,7 @@ if not isinstance(features, list):
     )
 
 
+
 # Feature-level checks
 for feature in features:
 
@@ -230,7 +231,7 @@ for feature in features:
             failure_breakdown.get("coordinates_structure_invalid", 0) + 1
         )
 
-    # Properties existence rule
+    # Properties existence rule (explicit enforcement)
     total_rule_checks += 1
     properties = feature.get("properties")
     if properties is None:
@@ -265,7 +266,7 @@ for feature in features:
             failure_breakdown.get("resolution_value_invalid", 0) + 1
         )
 
-    # Index existence rule (UPDATED)
+    # Index existence rule
     total_rule_checks += 1
     hex_index = properties.get("index")
     if hex_index is None:
@@ -274,7 +275,7 @@ for feature in features:
             failure_breakdown.get("index_missing", 0) + 1
         )
 
-    # Index type rule (UPDATED)
+    # Index type rule
     total_rule_checks += 1
     if not isinstance(hex_index, str):
         total_rule_failures += 1
