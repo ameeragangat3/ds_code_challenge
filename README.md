@@ -53,7 +53,7 @@ The solution demonstrates:
 
 ## Environment Setup
 
-Recommended Python version: `3.11` (project dependencies are pinned in `requirements.txt`).
+Recommended Python version: `>=3.11.14 & <=3.13.5` (project dependencies are pinned in `requirements.txt`).
 
 ``` bash
 python3 -m venv venv
