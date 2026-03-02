@@ -70,39 +70,136 @@ Outputs are written to:
 
 ## 1. End-to-End Data Flow
 
-``` mermaid
-flowchart TD
-    A[S3: city-hex-polygons-8-10.geojson] --> B[S3 Select Extraction]
-    B --> C[Schema Validation]
-    C --> D[Reference Validation Against city-hex-polygons-8.geojson]
-    D --> E[Load sr.csv.gz]
-    E --> F[H3 Spatial Assignment]
-    F --> G[Validation Against sr_hex.csv.gz]
-    G --> H[Centroid Computation (OSM)]
-    H --> I[Haversine Radius Filtering]
-    I --> J[Wind Dataset Download]
-    J --> K[Retry Strategy + Cleaning]
-    K --> L[Wind Temporal Join]
-    L --> M[Anonymisation]
-    M --> N[K-Anonymity Enforcement]
-    N --> O[Final Output]
-```
++------------------------------------------------------+
+|            S3: city-hex-polygons-8-10.geojson       |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|               S3 Select Extraction                  |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|              Schema-Based Validation                |
+|      (GeoJSON rules + Conformance Scoring)         |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|  Validation Against city-hex-polygons-8.geojson     |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|              Load Service Requests (sr.csv.gz)      |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|           H3 Spatial Assignment (Resolution 8)      |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|       Validation Against sr_hex.csv.gz (Match Rate) |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|     Atlantis Boundary Download (Overpass API)       |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|         Centroid Computation (Shapely)              |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|      Haversine Distance Filtering (1 Arc Minute)    |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|       Wind Dataset Download (Retry Strategy)        |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|         Wind Data Cleaning & Temporal Join          |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|                 Anonymisation Stage                 |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|           K-Anonymity Enforcement (k = 3)           |
++------------------------------------------------------+
+                        |
+                        v
++------------------------------------------------------+
+|                    Final Outputs                    |
+|     - final_anonymised.csv                          |
+|     - manual_review.csv                             |
++------------------------------------------------------+
 
 ------------------------------------------------------------------------
 
 ## 2. Validation Flow
 
-``` mermaid
-flowchart TD
-    A[Extracted GeoJSON] --> B[Collection-Level Checks]
-    B --> C[Feature-Level Checks]
-    C --> D[Geometry Rules]
-    D --> E[Property Rules]
-    E --> F[Conformance Score Calculation]
-    F --> G{Score >= Threshold?}
-    G -->|Yes| H[Continue Pipeline]
-    G -->|No| I[Fail Execution]
-```
+                +---------------------------+
+                |     Extracted GeoJSON     |
+                +---------------------------+
+                              |
+                              v
+                +---------------------------+
+                |   Collection-Level Rules  |
+                | - GeoJSON type check      |
+                | - Features list check     |
+                +---------------------------+
+                              |
+                              v
+                +---------------------------+
+                |     Feature-Level Rules   |
+                | - Feature type            |
+                | - Properties existence    |
+                +---------------------------+
+                              |
+                              v
+                +---------------------------+
+                |       Geometry Rules      |
+                | - Geometry type           |
+                | - Coordinates structure   |
+                +---------------------------+
+                              |
+                              v
+                +---------------------------+
+                |       Property Rules      |
+                | - Resolution present      |
+                | - Resolution == 8         |
+                | - Index present & type    |
+                +---------------------------+
+                              |
+                              v
+                +---------------------------+
+                |   Conformance Score Calc  |
+                | (Checks - Failures)/Total |
+                +---------------------------+
+                              |
+                              v
+                     +----------------+
+                     | Score >= Threshold? |
+                     +----------------+
+                        |            |
+                        v            v
+              +----------------+   +----------------+
+              | Continue       |   | Fail Execution |
+              | Pipeline       |   | with Error     |
+              +----------------+   +----------------+
 
 Conformance score formula:
 
@@ -114,16 +211,46 @@ All rule counts, failure breakdowns, and thresholds are logged.
 
 ## 3. Anonymisation Flow
 
-``` mermaid
-flowchart TD
-    A[Filtered Subsample] --> B[Remove Direct Identifiers]
-    B --> C[Spatial Precision Reduction (H3 Res 8)]
-    C --> D[Temporal Bucketing (6 Hours)]
-    D --> E[K-Anonymity (k=3)]
-    E --> F{Group Size >= 3?}
-    F -->|Yes| G[Release Record]
-    F -->|No| H[Export to Manual Review]
-```
++--------------------------------------------------+
+|         Filtered Atlantis Subsample              |
++--------------------------------------------------+
+                    |
+                    v
++--------------------------------------------------+
+|      Remove Direct Identifiers                   |
+|  - notification_number                           |
+|  - reference_number                              |
+|  - raw latitude/longitude                        |
++--------------------------------------------------+
+                    |
+                    v
++--------------------------------------------------+
+|      Spatial Precision Reduction                 |
+|  - Use H3 Resolution 8 (~500m precision)        |
++--------------------------------------------------+
+                    |
+                    v
++--------------------------------------------------+
+|      Temporal Precision Reduction                |
+|  - Round timestamps to 6-hour buckets            |
++--------------------------------------------------+
+                    |
+                    v
++--------------------------------------------------+
+|      Apply K-Anonymity (k = 3)                   |
+|  - Group by H3 index                             |
++--------------------------------------------------+
+                    |
+                    v
+         +-------------------------------+
+         | Group Size >= 3 ?             |
+         +-------------------------------+
+              |                      |
+              v                      v
++------------------------+   +---------------------------+
+| Release Record         |   | Flag for Manual Review    |
+| (Include in final set) |   | Export to review dataset  |
++------------------------+   +---------------------------+
 
 ------------------------------------------------------------------------
 
@@ -212,6 +339,33 @@ Wind dataset downloaded programmatically.
 -   Controlled failure
 
 Rationale: ensures resilience against unreliable endpoint.
+
+### WInd Data Retry Strategy Flow
++--------------------------------------------+
+|  Attempt Wind Dataset Download             |
++--------------------------------------------+
+                |
+                v
+        +------------------+
+        | Success?         |
+        +------------------+
+           |           |
+           v           v
++----------------+   +---------------------------+
+| Continue       |   | Wait (Exponential Backoff)|
+| Processing     |   | Increase Retry Counter    |
++----------------+   +---------------------------+
+                                |
+                                v
+                      +-----------------------+
+                      | Retry Limit Reached? |
+                      +-----------------------+
+                         |              |
+                         v              v
+                 +----------------+  +------------------+
+                 | Raise Error    |  | Retry Download   |
+                 | (Fail Cleanly) |  +------------------+
+                 +----------------+
 
 Wind joined using `pandas.merge_asof` with 1-hour tolerance.
 
