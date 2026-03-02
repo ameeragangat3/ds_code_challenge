@@ -104,45 +104,45 @@ Outputs are written to:
 
 ## 2. Validation Flow
 
-Extracted GeoJSON
-    ↓
-Collection-Level Rules
-    ↓
-Feature-Level Rules
-    ↓
-Geometry Rules
-    ↓
-Property Rules
-    ↓
-Conformance Score Calculation
-    ↓
-Score ≥ Threshold ?
-        → Yes → Continue Pipeline
-        → No  → Fail Execution
-
-Conformance score formula:
-
-    (total_rule_checks - total_failures) / total_rule_checks
-
-All rule counts, failure breakdowns, and thresholds are logged.
+    Extracted GeoJSON
+        ↓
+    Collection-Level Rules
+        ↓
+    Feature-Level Rules
+        ↓
+    Geometry Rules
+        ↓
+    Property Rules
+        ↓
+    Conformance Score Calculation
+        ↓
+    Score ≥ Threshold ?
+            → Yes → Continue Pipeline
+            → No  → Fail Execution
+    
+    Conformance score formula:
+    
+        (total_rule_checks - total_failures) / total_rule_checks
+    
+    All rule counts, failure breakdowns, and thresholds are logged.
 
 ------------------------------------------------------------------------
 
 ## 3. Anonymisation Flow
 
-Filtered Atlantis Subsample
-    ↓
-Remove Direct Identifiers
-    ↓
-Reduce Spatial Precision (H3 Resolution 8 ≈ 500m)
-    ↓
-Reduce Temporal Precision (6-hour buckets)
-    ↓
-Apply K-Anonymity (k = 3, grouped by H3)
-    ↓
-Group Size ≥ 3 ?
-        → Yes → Release Record
-        → No  → Export to Manual Review
+    Filtered Atlantis Subsample
+        ↓
+    Remove Direct Identifiers
+        ↓
+    Reduce Spatial Precision (H3 Resolution 8 ≈ 500m)
+        ↓
+    Reduce Temporal Precision (6-hour buckets)
+        ↓
+    Apply K-Anonymity (k = 3, grouped by H3)
+        ↓
+    Group Size ≥ 3 ?
+            → Yes → Release Record
+            → No  → Export to Manual Review
 ------------------------------------------------------------------------
 
 # Section 1 -- Extraction & Validation
@@ -232,15 +232,15 @@ Wind dataset downloaded programmatically.
 Rationale: ensures resilience against unreliable endpoint.
 
 ### WInd Data Retry Strategy Flow
-Attempt Wind Download
-    ↓
-Success ?
-        → Yes → Continue Processing
-        → No  → Wait (Exponential Backoff)
-                ↓
-            Retry Limit Reached ?
-                → Yes → Fail Cleanly
-                → No  → Retry Download
+    Attempt Wind Download
+        ↓
+    Success ?
+            → Yes → Continue Processing
+            → No  → Wait (Exponential Backoff)
+                    ↓
+                Retry Limit Reached ?
+                    → Yes → Fail Cleanly
+                    → No  → Retry Download
 
 Wind joined using `pandas.merge_asof` with 1-hour tolerance.
 
