@@ -323,6 +323,7 @@ Preserved utility:
 - Service delivery analytics capability
 
 The final dataset meets the required spatial (~500m) and temporal (<=6 hours) precision constraints and implements structural safeguards (k-anonymity and suppression) to significantly reduce re-identification risk while maintaining analytical value.
+
 ------------------------------------------------------------------------
 
 # Logging & Performance
