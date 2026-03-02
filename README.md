@@ -70,35 +70,35 @@ Outputs are written to:
 
 ## 1. End-to-End Data Flow
 
-S3: city-hex-polygons-8-10.geojson
-    ↓
-S3 Select (Resolution = 8)
-    ↓
-Schema Validation + Conformance Score
-    ↓
-Validation Against city-hex-polygons-8.geojson
-    ↓
-Load sr.csv.gz
-    ↓
-H3 Spatial Assignment (Resolution 8)
-    ↓
-Validation Against sr_hex.csv.gz
-    ↓
-Atlantis Boundary Download (Overpass API)
-    ↓
-Centroid Computation
-    ↓
-Haversine Radius Filtering (1 Arc Minute ≈ 1.852 km)
-    ↓
-Wind Dataset Download (Retry Strategy)
-    ↓
-Wind Cleaning & Temporal Join
-    ↓
-Anonymisation
-    ↓
-K-Anonymity (k = 3)
-    ↓
-Final Outputs (anonymised + manual review)
+    S3: city-hex-polygons-8-10.geojson
+        ↓
+    S3 Select (Resolution = 8)
+        ↓
+    Schema Validation + Conformance Score
+        ↓
+    Validation Against city-hex-polygons-8.geojson
+        ↓
+    Load sr.csv.gz
+        ↓
+    H3 Spatial Assignment (Resolution 8)
+        ↓
+    Validation Against sr_hex.csv.gz
+        ↓
+    Atlantis Boundary Download (Overpass API)
+        ↓
+    Centroid Computation
+        ↓
+    Haversine Radius Filtering (1 Arc Minute ≈ 1.852 km)
+        ↓
+    Wind Dataset Download (Retry Strategy)
+        ↓
+    Wind Cleaning & Temporal Join
+        ↓
+    Anonymisation
+        ↓
+    K-Anonymity (k = 3)
+        ↓
+    Final Outputs (anonymised + manual review)
 
 ------------------------------------------------------------------------
 
