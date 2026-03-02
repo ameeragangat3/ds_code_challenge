@@ -2,18 +2,15 @@
 # -*- coding: utf-8 -*-
 #%%
 import pandas as pd
-import numpy as np
 import h3
 import yaml
 import sys
 
-from src.logging_config import setup_logging
-logger = setup_logging()
-
+from src import (SR_FILE, SR_HEX_FILE)
 from src.data_extract_validate import download_aws_file, extract_resolution_8_hexes_s3
 
-SR_FILE = "sr.csv.gz"
-SR_HEX_FILE = "sr_hex.csv.gz"
+from src.logging_config import setup_logging
+logger = setup_logging()
 
 def load_config(config_path: str):
     with open(config_path, "r") as f:
@@ -67,86 +64,6 @@ def assign_requests_to_hex(sr_path, hex_features):
         "failure_rate": failure_rate
     }
 
-
-# Haversine Distance
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Calculate distance in kilometers between two lat/lon points.
-    Supports vectorised numpy arrays.
-    """
-
-    R = 6371  # Earth radius in km
-
-    lat1_rad = np.radians(lat1)
-    lon1_rad = np.radians(lon1)
-    lat2_rad = np.radians(lat2)
-    lon2_rad = np.radians(lon2)
-
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-
-    a = (
-        np.sin(dlat / 2) ** 2 +
-        np.cos(lat1_rad) * np.cos(lat2_rad) *
-        np.sin(dlon / 2) ** 2
-    )
-
-    c = 2 * np.arcsin(np.sqrt(a))
-
-    return R * c
-
-
-# Atlantis Subsampling
-def subsample_atlantis(df, atlantis_lat, atlantis_lon, radius_km):
-    """
-    Subsample service requests within radius_km of Atlantis centre.
-    """
-
-    valid_mask = (
-        (~df["latitude"].isna()) &
-        (~df["longitude"].isna())
-    )
-
-    distances = np.full(len(df), np.nan)
-
-    distances[valid_mask] = haversine_distance(
-        df.loc[valid_mask, "latitude"],
-        df.loc[valid_mask, "longitude"],
-        atlantis_lat,
-        atlantis_lon
-    )
-
-    df["distance_from_atlantis_km"] = distances
-
-    subsample_df = df[df["distance_from_atlantis_km"] <= radius_km]
-
-    return {
-        "atlantis_lat": round(atlantis_lat, 6),
-        "atlantis_lon": round(atlantis_lon, 6),
-        "radius_km": radius_km,
-        "total_records": len(df),
-        "subsample_count": len(subsample_df)
-    }
-
-
-def subsample_sr_hex(sr_hex_path, atlantis_lat, atlantis_lon, radius_km):
-    """
-    Subsample sr_hex.csv.gz within specified radius of Atlantis centroid.
-    """
-
-    df = pd.read_csv(sr_hex_path, compression="gzip")
-
-    df["distance_from_atlantis_km"] = haversine_distance(
-        df["latitude"],
-        df["longitude"],
-        atlantis_lat,
-        atlantis_lon
-    )
-
-    filtered_df = df[df["distance_from_atlantis_km"] <= radius_km].copy()
-
-    return filtered_df
-
 #%%
 def main():
     logger.info("Spatial assignment stage initiated")
@@ -171,8 +88,8 @@ def main():
     if assignment_result['failure_rate'] > spatial_failure_threshold:
         logger.error("Spatial assignment failed threshold")
         sys.exit(1)
-
-    logger.info("Spatial assignment passed threshold")
+    else: 
+        logger.info("Spatial assignment passed threshold")
     
     # Ground Truth Comparison
     logger.info("Ground truth comparison stage initiated")

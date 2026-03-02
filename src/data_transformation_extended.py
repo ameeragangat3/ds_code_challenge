@@ -5,20 +5,15 @@ import requests
 import json
 from pathlib import Path
 from shapely.geometry import shape
+import numpy as np
 import pandas as pd
 import time
 
-from src.data_transformation import load_config, subsample_sr_hex
+from src import (OVERPASS_URL, ATLANTIS_BOUNDARY_CACHE_PATH, WIND_URL, WIND_CACHE_PATH)
+from src.data_transformation import load_config
 
 from src.logging_config import setup_logging
 logger = setup_logging()
-
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-ATLANTIS_BOUNDARY_CACHE_PATH = Path("data/atlantis_boundary.geojson")
-
-WIND_URL = "https://www.capetown.gov.za/_layouts/OpenDataPortalHandler/DownloadHandler.ashx?DocumentName=Wind_direction_and_speed_2020.ods&DatasetDocument=https%3A%2F%2Fcityapps.capetown.gov.za%2Fsites%2Fopendatacatalog%2FDocuments%2FWind%2FWind_direction_and_speed_2020.ods"
-
-WIND_CACHE_PATH = Path("data/wind_2020.ods")
 
 def download_atlantis_boundary():
     """
@@ -114,6 +109,7 @@ def download_wind_data(max_retries=3, backoff_factor=2):
     """
 
     if WIND_CACHE_PATH.exists():
+        logger.info(f"Wind data already downloaded in {WIND_CACHE_PATH}")
         return WIND_CACHE_PATH
 
     attempt = 0
@@ -127,13 +123,13 @@ def download_wind_data(max_retries=3, backoff_factor=2):
 
             with open(WIND_CACHE_PATH, "wb") as f:
                 f.write(response.content)
-
+                logger.info(f"Wind data successfully downloaded and saved in {WIND_CACHE_PATH}")
             return WIND_CACHE_PATH
 
         except Exception as e:
             attempt += 1
             wait_time = backoff_factor ** attempt
-            print(f"{e}\nWind download failed (attempt {attempt}). Retrying in {wait_time}s...")
+            logger.info(f"{e}\nWind download failed (attempt {attempt}). Retrying in {wait_time}s...")
             time.sleep(wait_time)
 
     raise RuntimeError("Failed to download wind data after retries.")
@@ -219,6 +215,7 @@ def anonymise_dataset(df: pd.DataFrame, review_output_path: str = "data/manual_r
         "reference_number",
         "latitude",
         "longitude",
+        "distance_from_atlantis_km",
     ]
 
     # Only keep columns that actually exist
@@ -250,6 +247,53 @@ def anonymise_dataset(df: pd.DataFrame, review_output_path: str = "data/manual_r
         )
 
     return anonymised_df
+
+# Haversine Distance
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate distance in kilometers between two lat/lon points.
+    Supports vectorised numpy arrays.
+    """
+
+    R = 6371  # Earth radius in km
+
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2)
+    lon2_rad = np.radians(lon2)
+
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+
+    a = (
+        np.sin(dlat / 2) ** 2 +
+        np.cos(lat1_rad) * np.cos(lat2_rad) *
+        np.sin(dlon / 2) ** 2
+    )
+
+    c = 2 * np.arcsin(np.sqrt(a))
+
+    return R * c
+
+
+def subsample_sr_hex(sr_hex_path, atlantis_lat, atlantis_lon, radius_km):
+    """
+    Subsample sr_hex.csv.gz within specified radius of Atlantis centroid.
+    """
+
+    df = pd.read_csv(sr_hex_path, compression="gzip")
+
+    df["distance_from_atlantis_km"] = haversine_distance(
+        df["latitude"],
+        df["longitude"],
+        atlantis_lat,
+        atlantis_lon
+    )
+
+    filtered_df = df[df["distance_from_atlantis_km"] <= radius_km].copy()
+
+    return filtered_df
+
 
 def apply_k_anonymity_filter(
     df: pd.DataFrame,

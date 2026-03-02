@@ -9,16 +9,9 @@ import time
 from pathlib import Path
 import yaml
 
+from src import (CREDS_URL, AWS_BUCKET, CITY_HEX_FILE, REGION, VALIDATION_FILE)
 
 from src.logging_config import setup_logging
-
-CREDS_URL = "https://cct-ds-code-challenge-input-data.s3.af-south-1.amazonaws.com/ds_code_challenge_creds.json"
-
-AWS_BUCKET = "cct-ds-code-challenge-input-data"
-CITY_HEX_FILE = "city-hex-polygons-8-10.geojson"
-REGION = "af-south-1"
-VALIDATION_FILE = "city-hex-polygons-8.geojson"
-
 logger = setup_logging()
 
 def load_aws_credentials():
@@ -87,7 +80,7 @@ def download_aws_file(filename):
     output_path = Path(f"data/{filename}")
 
     if output_path.exists():
-        print("File already exists locally.")
+        logger.info(f"{filename} File already exists locally.")
     else:
         output_path.parent.mkdir(exist_ok=True)
         s3 = create_s3_client()
