@@ -1,1 +1,17 @@
-validation:  conformance_threshold: 0.95spatial_assignment:  failure_threshold: 0.02subsample:  radius_km: 1.852  wind_enrichment:  max_retries: 3  backoff_factor: 2  
+# Global validation controls used during extraction and transformation checks.
+validation:
+  # Minimum acceptable schema/ground-truth conformance score.
+  conformance_threshold: 0.95
+
+spatial_assignment:
+  # Maximum allowable proportion of computed H3 values outside valid city hexes.
+  failure_threshold: 0.02
+
+subsample:
+  # 1 arc minute ~= 1.852 km. Used to filter records around Atlantis centroid.
+  radius_km: 1.852
+
+wind_enrichment:
+  # Retry settings for unreliable wind data endpoint.
+  max_retries: 3
+  backoff_factor: 2

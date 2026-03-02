@@ -36,6 +36,11 @@ The solution demonstrates:
     │   ├── data_transformation_extended.py
     │   ├── logging_config.py
     │   └── __init__.py
+    ├── tests/
+    │   ├── test_data_extract_validate.py
+    │   ├── test_data_transformation.py
+    │   ├── test_data_transformation_extended.py
+    │   └── test_integration_pipeline.py
     │
     ├── data/      # raw input data
     ├── output/    # generated datasets
@@ -48,21 +53,37 @@ The solution demonstrates:
 
 ## Environment Setup
 
+Recommended Python version: `3.11` (project dependencies are pinned in `requirements.txt`).
+
 ``` bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python3 --version
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 ```
 
 ## Run Pipeline
 
 ``` bash
-python -m src.ds_code_challenge_pipeline
+python3 -m src.ds_code_challenge_pipeline
 ```
 
 Outputs are written to:
 
     output/
+
+## Run Unit Tests
+
+``` bash
+python3 -m unittest discover -s tests -v
+```
+
+## Run Integration Tests Only
+
+``` bash
+python3 -m unittest tests.test_integration_pipeline -v
+```
 
 ------------------------------------------------------------------------
 
@@ -231,7 +252,8 @@ Wind dataset downloaded programmatically.
 
 Rationale: ensures resilience against unreliable endpoint.
 
-### WInd Data Retry Strategy Flow
+### Wind Data Retry Strategy Flow
+
     Attempt Wind Download
         ↓
     Success ?
@@ -248,62 +270,59 @@ Wind joined using `pandas.merge_asof` with 1-hour tolerance.
 
 # Anonymisation Justification
 
-Summary:
-- Spatial precision reduced to H3 resolution 8 (\~500m).\
-Temporal precision reduced to 6-hour buckets.\
-Direct identifiers removed.\
-K-anonymity (k=3) applied on spatial identifier.
-Records failing k-anonymity exported for manual review.
+## Summary
+
+- Spatial precision reduced to H3 resolution 8 (~500m)
+- Temporal precision reduced to 6-hour buckets
+- Direct identifiers removed
+- K-anonymity (`k = 3`) applied on spatial identifier
+- Records failing k-anonymity exported for manual review
+
 This balances privacy and analytical utility.
 
-Justification Discussion:
-The objective of the anonymisation process was to reduce the risk of re-identification while preserving analytical utility for spatial and environmental analysis.
+## Justification Discussion
 
-1. Spatial Precision Control
+The objective of the anonymisation process was to reduce re-identification risk while preserving analytical utility for spatial and environmental analysis.
 
-Exact latitude and longitude coordinates were removed from the dataset. Instead, location was represented using the H3 spatial indexing system at resolution level 8. At this resolution, each hexagon represents an area of approximately 0.5 km² (≈500m spatial precision). This satisfies the requirement of preserving location accuracy to within approximately 500m, while preventing precise geolocation of individual service requests.
+### 1. Spatial Precision Control
 
-Using H3 also ensures consistent spatial aggregation and avoids the disclosure risk associated with raw coordinates.
+Exact latitude and longitude coordinates were removed. Instead, location was represented using the H3 spatial indexing system at resolution level 8. At this resolution, each hexagon represents an area of approximately 0.5 km² (~500m spatial precision).
 
-2. Temporal Precision Control
+This satisfies the requirement of preserving location accuracy to within approximately 500m while preventing precise geolocation of individual service requests.
 
-The creation_timestamp field was rounded down to 6-hour intervals using time bucketing. This ensures temporal accuracy is preserved within 6 hours, as required. Exact timestamps were removed to prevent linkage attacks that could combine public knowledge of an event time with service request data.
+### 2. Temporal Precision Control
 
-The wind data was joined using the nearest hourly observation and similarly aligned to this temporal resolution.
+The `creation_timestamp` field was rounded down to 6-hour intervals using time bucketing. This preserves temporal accuracy within 6 hours and reduces linkage risk from exact timestamps.
 
-3. Removal of Direct and Indirect Identifiers
+Wind data was joined using the nearest hourly observation and aligned to this temporal precision.
 
-Columns that could contribute to identifying an individual resident (e.g., reference numbers, notification numbers, raw coordinates, distance from centroid) were removed from the released dataset.
+### 3. Removal of Direct and Indirect Identifiers
 
-Operational fields such as directorate, department, and request codes were retained, as they describe service characteristics rather than personal attributes. These fields are necessary for meaningful infrastructure and service analysis.
+Columns that could contribute to identifying an individual resident (for example, reference numbers, notification numbers, raw coordinates, and distance from centroid) were removed from the released dataset.
 
-4. K-Anonymity Enforcement
+Operational fields such as directorate, department, and request codes were retained, since they describe service characteristics rather than personal attributes and are necessary for infrastructure and service analysis.
 
-To further mitigate re-identification risk, k-anonymity with k = 3 was applied using the H3 resolution 8 index as the quasi-identifier.
+### 4. K-Anonymity Enforcement
 
-Any hexagon containing fewer than three service requests in the filtered dataset was considered high risk and removed from the released dataset. These records were exported to a separate manual review file for controlled, human-led anonymisation.
+To further mitigate re-identification risk, k-anonymity with `k = 3` was applied using the H3 resolution 8 index as the quasi-identifier.
 
-This ensures that no released record can be uniquely identified based on spatial grouping alone.
+Any hexagon containing fewer than three service requests in the filtered dataset was considered high risk and removed from the released dataset. These records were exported to a separate manual review file for controlled human-led anonymisation.
 
-5. Privacy–Utility Balance
+### 5. Privacy-Utility Balance
 
-The applied transformations:
+Applied transformations:
 
-Remove exact location precision
+- Remove exact location precision
+- Reduce temporal granularity
+- Suppress rare spatial records
 
-Reduce temporal granularity
+Preserved utility:
 
-Suppress rare spatial records
+- Suburb-level infrastructure insights
+- Environmental augmentation (wind)
+- Service delivery analytics capability
 
-while preserving:
-
-Suburb-level infrastructure insights
-
-Environmental augmentation (wind)
-
-Service delivery analytics capability
-
-The final dataset therefore meets the required spatial (~500m) and temporal (≤6 hours) precision constraints and implements structural safeguards (k-anonymity and suppression) to significantly reduce re-identification risk while maintaining analytical value.
+The final dataset meets the required spatial (~500m) and temporal (<=6 hours) precision constraints and implements structural safeguards (k-anonymity and suppression) to significantly reduce re-identification risk while maintaining analytical value.
 ------------------------------------------------------------------------
 
 # Logging & Performance
@@ -326,8 +345,9 @@ Generated in:
 
 Includes:
 
--   final_anonymised.csv
--   manual_review.csv
+-   final_anonymised_dataset.csv
+-   manual_review_high_risk_records.csv
+-   removed_columns_manual_review.csv
+-   full_dataset_manual_review.csv
 
 ------------------------------------------------------------------------
-
