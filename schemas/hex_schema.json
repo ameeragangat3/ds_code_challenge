@@ -1,1 +1,28 @@
-{    "collection_rules": {      "type_must_be": "FeatureCollection",      "features_key_required": true    },    "feature_rules": {      "feature_type_must_be": "Feature",      "geometry_required": true,      "properties_required": true    },    "geometry_rules": {      "geometry_type_must_be": "Polygon",      "coordinates_required": true,      "coordinates_min_length": 4    },    "property_rules": {      "resolution_required": true,      "resolution_type": "int",      "resolution_must_equal": 8,      "index_required": true,      "index_type": "str"    }}
+{
+  "_comment": "Schema rules used for GeoJSON conformance scoring in validate_hex_schema.",
+  "collection_rules": {
+    "_comment": "Rules that apply to the top-level FeatureCollection object.",
+    "type_must_be": "FeatureCollection",
+    "features_key_required": true
+  },
+  "feature_rules": {
+    "_comment": "Rules for each feature item under the features array.",
+    "feature_type_must_be": "Feature",
+    "geometry_required": true,
+    "properties_required": true
+  },
+  "geometry_rules": {
+    "_comment": "Geometry shape and coordinate minimum constraints.",
+    "geometry_type_must_be": "Polygon",
+    "coordinates_required": true,
+    "coordinates_min_length": 4
+  },
+  "property_rules": {
+    "_comment": "Expected property fields and strict typing for hex metadata.",
+    "resolution_required": true,
+    "resolution_type": "int",
+    "resolution_must_equal": 8,
+    "index_required": true,
+    "index_type": "str"
+  }
+}
