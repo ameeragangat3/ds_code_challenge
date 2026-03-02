@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#%%
-import requests
+"""Extended transformations for subsampling, wind enrichment, and anonymisation."""
+
 import json
+import time
 from pathlib import Path
-from shapely.geometry import shape
+from typing import Any
+
 import numpy as np
 import pandas as pd
-import time
+import requests
+from shapely.geometry import shape
 
-from src import (OVERPASS_URL, ATLANTIS_BOUNDARY_CACHE_PATH, WIND_URL, WIND_CACHE_PATH)
+from src import (
+    ATLANTIS_BOUNDARY_CACHE_PATH,
+    OVERPASS_URL,
+    WIND_CACHE_PATH,
+    WIND_URL,
+)
 from src.data_transformation import load_config
-
 from src.logging_config import setup_logging
+
 logger = setup_logging()
 
-def download_atlantis_boundary():
-    """
-    Download Atlantis suburb boundary from OpenStreetMap via Overpass API.
-    """
 
+def download_atlantis_boundary() -> dict[str, Any]:
+    """Download Atlantis suburb boundary from OpenStreetMap via Overpass."""
     query = """
     [out:json];
     area["name"="South Africa"]->.searchArea;
@@ -30,17 +36,15 @@ def download_atlantis_boundary():
     out geom;
     """
 
-    response = requests.post(OVERPASS_URL, data={"data": query})
+    response = requests.post(OVERPASS_URL, data={"data": query}, timeout=60)
     response.raise_for_status()
-
     data = response.json()
 
     elements = data.get("elements", [])
     if not elements:
         raise ValueError("Atlantis boundary not found in Overpass response.")
 
-    # Choose feature that is in Western Cape (~lat -33)
-    chosen = None
+    chosen: dict[str, Any] | None = None
     for element in elements:
         if "members" in element or "geometry" in element:
             chosen = element
@@ -49,167 +53,152 @@ def download_atlantis_boundary():
     if not chosen:
         raise ValueError("No valid geometry found for Atlantis.")
 
-    coordinates = []
-
+    coordinates: list[list[tuple[float, float]]] = []
     if "members" in chosen:
         for member in chosen.get("members", []):
             if "geometry" in member:
-                coords = [(p["lon"], p["lat"]) for p in member["geometry"]]
+                coords = [(point["lon"], point["lat"]) for point in member["geometry"]]
                 coordinates.append(coords)
     elif "geometry" in chosen:
-        coords = [(p["lon"], p["lat"]) for p in chosen["geometry"]]
+        coords = [(point["lon"], point["lat"]) for point in chosen["geometry"]]
         coordinates.append(coords)
 
     geojson = {
         "type": "Feature",
         "geometry": {
             "type": "MultiPolygon",
-            "coordinates": [coordinates]
+            "coordinates": [coordinates],
         },
-        "properties": {
-            "name": "Atlantis"
-        }
+        "properties": {"name": "Atlantis"},
     }
 
     ATLANTIS_BOUNDARY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(ATLANTIS_BOUNDARY_CACHE_PATH, "w") as f:
-        json.dump(geojson, f)
+    with ATLANTIS_BOUNDARY_CACHE_PATH.open("w", encoding="utf-8") as file_obj:
+        json.dump(geojson, file_obj)
 
     return geojson
 
 
-def load_atlantis_boundary():
-    """
-    Load cached boundary or download if not present.
-    """
-
+def load_atlantis_boundary() -> dict[str, Any]:
+    """Load cached Atlantis boundary data or download it if absent."""
     if ATLANTIS_BOUNDARY_CACHE_PATH.exists():
-        with open(ATLANTIS_BOUNDARY_CACHE_PATH, "r") as f:
-            return json.load(f)
+        with ATLANTIS_BOUNDARY_CACHE_PATH.open("r", encoding="utf-8") as file_obj:
+            return json.load(file_obj)
 
     return download_atlantis_boundary()
 
 
-def get_atlantis_centroid():
-    """
-    Compute geometric centroid of Atlantis suburb boundary.
-    """
-
+def get_atlantis_centroid() -> tuple[float, float]:
+    """Compute and return Atlantis centroid as ``(latitude, longitude)``."""
     geojson = load_atlantis_boundary()
-
     polygon = shape(geojson["geometry"])
     centroid = polygon.centroid
+    return centroid.y, centroid.x
 
-    return centroid.y, centroid.x  # (lat, lon)
 
-def download_wind_data(max_retries=3, backoff_factor=2):
+def download_wind_data(max_retries: int = 3, backoff_factor: int = 2) -> Path:
+    """Download wind data with retry and exponential backoff.
+
+    Args:
+        max_retries: Maximum retry attempts.
+        backoff_factor: Exponential base for backoff wait time.
+
+    Returns:
+        Path to cached local wind dataset.
     """
-    Download wind data with retry and exponential backoff.
-    """
-
     if WIND_CACHE_PATH.exists():
-        logger.info(f"Wind data already downloaded in {WIND_CACHE_PATH}")
+        logger.info("Wind data already downloaded in %s", WIND_CACHE_PATH)
         return WIND_CACHE_PATH
 
     attempt = 0
-
     while attempt < max_retries:
         try:
             response = requests.get(WIND_URL, timeout=30)
             response.raise_for_status()
 
             WIND_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with WIND_CACHE_PATH.open("wb") as file_obj:
+                file_obj.write(response.content)
 
-            with open(WIND_CACHE_PATH, "wb") as f:
-                f.write(response.content)
-                logger.info(f"Wind data successfully downloaded and saved in {WIND_CACHE_PATH}")
+            logger.info("Wind data successfully downloaded and saved in %s", WIND_CACHE_PATH)
             return WIND_CACHE_PATH
-
-        except Exception as e:
+        except Exception as exc:
             attempt += 1
             wait_time = backoff_factor ** attempt
-            logger.info(f"{e}\nWind download failed (attempt {attempt}). Retrying in {wait_time}s...")
+            logger.info(
+                "%s\nWind download failed (attempt %s). Retrying in %ss...",
+                exc,
+                attempt,
+                wait_time,
+            )
             time.sleep(wait_time)
 
     raise RuntimeError("Failed to download wind data after retries.")
 
 
-def load_wind_data(max_retries=3, backoff_factor=2):
-    """
-    Load and clean wind dataset for Atlantis AQM site.
-    """
-
-    path = download_wind_data(max_retries,backoff_factor)
+def load_wind_data(max_retries: int = 3, backoff_factor: int = 2) -> pd.DataFrame:
+    """Load and clean Atlantis wind measurements from the ODS source file."""
+    path = download_wind_data(max_retries=max_retries, backoff_factor=backoff_factor)
     df = pd.read_excel(path, engine="odf", header=None)
 
-    # Correct header rows
     station_row = df.iloc[2]
     variable_row = df.iloc[3]
+    columns: list[str] = []
 
-    columns = []
-
-    for i in range(len(df.columns)):
-        if i == 0:
+    for idx in range(len(df.columns)):
+        if idx == 0:
             columns.append("DateTime")
-        else:
-            station = str(station_row[i]).strip()
-            variable = str(variable_row[i]).strip()
-            col_name = f"{station}_{variable}"
-            columns.append(col_name)
+            continue
+
+        station = str(station_row[idx]).strip()
+        variable = str(variable_row[idx]).strip()
+        columns.append(f"{station}_{variable}")
 
     df.columns = columns
-
-    # Drop metadata rows (0–4)
     df = df.iloc[5:].reset_index(drop=True)
 
-    # Identify Atlantis columns
     direction_col = "Atlantis AQM Site_Wind Dir V"
     speed_col = "Atlantis AQM Site_Wind Speed V"
-
     if direction_col not in df.columns or speed_col not in df.columns:
         raise ValueError("Could not detect Atlantis wind columns.")
 
-    df = df[["DateTime", direction_col, speed_col]]
+    df = df[["DateTime", direction_col, speed_col]].rename(
+        columns={
+            direction_col: "wind_direction_deg",
+            speed_col: "wind_speed_mps",
+        }
+    )
 
-    df = df.rename(columns={
-        direction_col: "wind_direction_deg",
-        speed_col: "wind_speed_mps"
-    })
-
-    # Parse datetime
-    # Keep only rows that look like datetime strings
+    # Keep only rows that resemble the expected date string format.
     df = df[df["DateTime"].astype(str).str.contains(r"\d{2}/\d{2}/\d{4}")]
-    
-    # Convert safely
+
     df["DateTime"] = pd.to_datetime(
         df["DateTime"],
         format="%d/%m/%Y %H:%M",
-        errors="coerce"
+        errors="coerce",
     )
-    
-    # Drop rows where conversion failed
     df = df.dropna(subset=["DateTime"])
 
-    # Convert numeric
     df["wind_direction_deg"] = pd.to_numeric(df["wind_direction_deg"], errors="coerce")
     df["wind_speed_mps"] = pd.to_numeric(df["wind_speed_mps"], errors="coerce")
-
     return df
 
-def anonymise_dataset(df: pd.DataFrame, review_output_path: str = "data/manual_review.csv"):
+
+def anonymise_dataset(
+    df: pd.DataFrame,
+    review_output_path: str = "data/manual_review.csv",
+) -> pd.DataFrame:
+    """Anonymise a dataframe while preserving coarse spatial and temporal utility.
+
+    Args:
+        df: Input dataframe.
+        review_output_path: Path for exporting removed sensitive columns.
+
+    Returns:
+        Dataframe with sensitive fields removed and timestamps rounded to 6 hours.
     """
-    Anonymise dataset while preserving spatial precision (~500m via H3)
-    and temporal precision (~6 hours).
+    anonymised_df = df.copy()
 
-    Sensitive columns are exported separately for manual review.
-    """
-
-    df = df.copy()
-
-    # -----------------------------------------
-    # Define sensitive columns
-    # -----------------------------------------
     sensitive_columns = [
         "notification_number",
         "reference_number",
@@ -217,45 +206,29 @@ def anonymise_dataset(df: pd.DataFrame, review_output_path: str = "data/manual_r
         "longitude",
         "distance_from_atlantis_km",
     ]
+    sensitive_existing = [col for col in sensitive_columns if col in anonymised_df.columns]
 
-    # Only keep columns that actually exist
-    sensitive_existing = [col for col in sensitive_columns if col in df.columns]
-
-    # -----------------------------------------
-    # Export sensitive data for manual review
-    # -----------------------------------------
     if sensitive_existing:
-        manual_review_df = df[sensitive_existing].copy()
-
-        # Ensure output directory exists
+        manual_review_df = anonymised_df[sensitive_existing].copy()
         Path(review_output_path).parent.mkdir(parents=True, exist_ok=True)
-
         manual_review_df.to_csv(review_output_path, index=False)
 
-    # -----------------------------------------
-    # Drop sensitive columns from analytical dataset
-    # -----------------------------------------
-    anonymised_df = df.drop(columns=sensitive_existing)
+    anonymised_df = anonymised_df.drop(columns=sensitive_existing)
 
-    # -----------------------------------------
-    # Temporal precision: round to 6 hours
-    # -----------------------------------------
     if "creation_timestamp" in anonymised_df.columns:
-        anonymised_df["creation_timestamp"] = (
-            anonymised_df["creation_timestamp"]
-            .dt.floor("6h")
-        )
+        anonymised_df["creation_timestamp"] = anonymised_df["creation_timestamp"].dt.floor("6h")
 
     return anonymised_df
 
-# Haversine Distance
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Calculate distance in kilometers between two lat/lon points.
-    Supports vectorised numpy arrays.
-    """
 
-    R = 6371  # Earth radius in km
+def haversine_distance(
+    lat1: Any,
+    lon1: Any,
+    lat2: Any,
+    lon2: Any,
+) -> Any:
+    """Calculate great-circle distance in kilometers using the Haversine formula."""
+    earth_radius_km = 6371
 
     lat1_rad = np.radians(lat1)
     lon1_rad = np.radians(lon1)
@@ -266,202 +239,159 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     dlon = lon2_rad - lon1_rad
 
     a = (
-        np.sin(dlat / 2) ** 2 +
-        np.cos(lat1_rad) * np.cos(lat2_rad) *
-        np.sin(dlon / 2) ** 2
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2) ** 2
     )
-
     c = 2 * np.arcsin(np.sqrt(a))
+    return earth_radius_km * c
 
-    return R * c
 
-
-def subsample_sr_hex(sr_hex_path, atlantis_lat, atlantis_lon, radius_km):
-    """
-    Subsample sr_hex.csv.gz within specified radius of Atlantis centroid.
-    """
-
+def subsample_sr_hex(
+    sr_hex_path: str,
+    atlantis_lat: float,
+    atlantis_lon: float,
+    radius_km: float,
+) -> pd.DataFrame:
+    """Subsample ``sr_hex`` records within a radius of Atlantis centroid."""
     df = pd.read_csv(sr_hex_path, compression="gzip")
-
     df["distance_from_atlantis_km"] = haversine_distance(
         df["latitude"],
         df["longitude"],
         atlantis_lat,
-        atlantis_lon
+        atlantis_lon,
     )
-
-    filtered_df = df[df["distance_from_atlantis_km"] <= radius_km].copy()
-
-    return filtered_df
+    return df[df["distance_from_atlantis_km"] <= radius_km].copy()
 
 
 def apply_k_anonymity_filter(
     df: pd.DataFrame,
     spatial_col: str,
     time_col: str,
-    k: int = 3
-):
+    k: int = 3,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Enforce k-anonymity by spatial group size and split high-risk rows.
+
+    Args:
+        df: Input dataframe.
+        spatial_col: Column used as the spatial quasi-identifier.
+        time_col: Timestamp column required to exist in the dataset.
+        k: Minimum group size to release records.
+
+    Returns:
+        ``(final_df, manual_review_df)`` after k-anonymity filtering.
     """
-    Enforce k-anonymity based on:
-    - computed_h3_index (spatial)
+    logger.info("K-anonymity stage initiated | k=%s", k)
 
-    Records belonging to groups smaller than k
-    are removed and exported for manual review.
-    """
+    if spatial_col not in df.columns:
+        raise KeyError(f"Missing spatial column: {spatial_col}")
+    if time_col not in df.columns:
+        raise KeyError(f"Missing time column: {time_col}")
 
-    logger.info(f"K-anonymity stage initiated | k={k}")
+    group_counts = df.groupby([spatial_col]).size().reset_index(name="group_size")
+    working_df = df.merge(group_counts, on=[spatial_col], how="left")
 
-    # Count group sizes
-    group_counts = (
-        df
-        .groupby(["h3_level8_index"])
-        .size()
-        .reset_index(name="group_size")
-    )
+    unsafe_mask = working_df["group_size"] < k
+    manual_review_df = working_df[unsafe_mask].copy()
+    final_df = working_df[~unsafe_mask].copy()
 
-    # Merge group sizes back
-    df = df.merge(
-        group_counts,
-        on=["h3_level8_index"],
-        how="left"
-    )
-
-    # Identify unsafe records
-    unsafe_mask = df["group_size"] < k
-
-    manual_review_df = df[unsafe_mask].copy()
-    final_df = df[~unsafe_mask].copy()
-
-    # Drop helper column
     final_df = final_df.drop(columns=["group_size"])
     manual_review_df = manual_review_df.drop(columns=["group_size"])
 
     logger.info(
-        f"K-anonymity report | "
-        f"total_records={len(df)} | "
-        f"released_records={len(final_df)} | "
-        f"flagged_for_review={len(manual_review_df)}"
+        "K-anonymity report | total_records=%s | released_records=%s | "
+        "flagged_for_review=%s",
+        len(working_df),
+        len(final_df),
+        len(manual_review_df),
     )
     return final_df, manual_review_df
 
-#%%
-def main():
+
+def main() -> None:
+    """Run extended transformation stage as a standalone script."""
     logger.info("Computing Atlantis centroid from OSM boundary")
     config = load_config("config.yaml")
-    radius_km = config["subsample"]["radius_km"]
-    wind_enrichment_max_retries = config["wind_enrichment"]["max_retries"]
-    wind_enrichment_backoff_factor = config["wind_enrichment"]["backoff_factor"]
-    
-    atlantis_lat, atlantis_lon = get_atlantis_centroid()
 
+    radius_km = config["subsample"]["radius_km"]
+    max_retries = config["wind_enrichment"]["max_retries"]
+    backoff_factor = config["wind_enrichment"]["backoff_factor"]
+
+    atlantis_lat, atlantis_lon = get_atlantis_centroid()
     logger.info(
-        f"Derived Atlantis centroid | "
-        f"lat={round(atlantis_lat, 6)} | "
-        f"lon={round(atlantis_lon, 6)}"
+        "Derived Atlantis centroid | lat=%s | lon=%s",
+        round(atlantis_lat, 6),
+        round(atlantis_lon, 6),
     )
 
-    # -------------------------
-    # Atlantis Subsampling
-    # -------------------------
     logger.info("Atlantis subsampling stage initiated")
-
-    
     subsample_df = subsample_sr_hex(
         sr_hex_path="data/sr_hex.csv.gz",
         atlantis_lat=atlantis_lat,
         atlantis_lon=atlantis_lon,
-        radius_km=radius_km
+        radius_km=radius_km,
     )
-    
     logger.info(
-        f"Atlantis subsample | "
-        f"radius_km={radius_km} | "
-        f"subsample_count={len(subsample_df)}"
+        "Atlantis subsample | radius_km=%s | subsample_count=%s",
+        radius_km,
+        len(subsample_df),
     )
-
-    # wind data implementation
 
     logger.info("Loading wind dataset")
-    wind_df = load_wind_data(wind_enrichment_max_retries,wind_enrichment_backoff_factor)
-    
-    logger.info(f"Wind shape: {wind_df.shape}")    
-    logger.info(f"Wind columns: {list(wind_df.columns)}")
-    logger.info(f"Wind cleaned preview:\n{wind_df.head()}")
-    
-    # Wind Enrichment Stage    
+    wind_df = load_wind_data(max_retries=max_retries, backoff_factor=backoff_factor)
+    logger.info("Wind shape: %s", wind_df.shape)
+    logger.info("Wind columns: %s", list(wind_df.columns))
+    logger.info("Wind cleaned preview:\n%s", wind_df.head())
+
     logger.info("Wind enrichment stage initiated")
-    
-    # Convert SR timestamp
     subsample_df["creation_timestamp"] = pd.to_datetime(
-        subsample_df["creation_timestamp"],
-        errors="coerce"
+        subsample_df["creation_timestamp"], errors="coerce"
     )
-    
-    # Remove timezone info to match wind dataset
-    subsample_df["creation_timestamp"] = (
-        subsample_df["creation_timestamp"]
-        .dt.tz_localize(None)
+    subsample_df["creation_timestamp"] = subsample_df["creation_timestamp"].dt.tz_localize(
+        None
     )
-    
-    # Sort both datasets
+
     subsample_df = subsample_df.sort_values("creation_timestamp")
     wind_df = wind_df.sort_values("DateTime")
-    
-    # Perform nearest-hour join
+
     enriched_df = pd.merge_asof(
         subsample_df,
         wind_df,
         left_on="creation_timestamp",
         right_on="DateTime",
         direction="nearest",
-        tolerance=pd.Timedelta("1h")
-    )
-    
-    enriched_df = enriched_df.rename(columns={"DateTime": "wind_timestamp"})    
-    
-    logger.info(
-        f"Wind enrichment completed | enriched_records={len(enriched_df)}"
-    )    
+        tolerance=pd.Timedelta("1h"),
+    ).rename(columns={"DateTime": "wind_timestamp"})
 
-    # Anonymisation Stage
-    # -------------------------------------------------
+    logger.info("Wind enrichment completed | enriched_records=%s", len(enriched_df))
+
     logger.info("Anonymisation stage initiated")
-    
-    # Ensure output directory exists at project root
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
-        
-    enriched_df.to_csv(f"{output_dir}/full_dataset_manual_review.csv", index=False)
-    
-    anonymised_df = anonymise_dataset(
-    enriched_df,
-    review_output_path=f"{output_dir}/removed_columns_manual_review.csv"
-    )
 
-    logger.info(f"Manual review file created at {output_dir}/removed_columns_manual_review.csv")
-    
-    logger.info(
-        f"Anonymisation completed | "
-        f"final_columns={list(anonymised_df.columns)}"
-    )    
-    
-    # Apply k-anonymity
-    final_df, manual_review_df = apply_k_anonymity_filter(
+    enriched_df.to_csv(f"{output_dir}/full_dataset_manual_review.csv", index=False)
+
+    anonymised_df = anonymise_dataset(
         enriched_df,
+        review_output_path=f"{output_dir}/removed_columns_manual_review.csv",
+    )
+    logger.info("Manual review file created at %s", output_dir / "removed_columns_manual_review.csv")
+    logger.info("Anonymisation completed | final_columns=%s", list(anonymised_df.columns))
+
+    final_df, manual_review_df = apply_k_anonymity_filter(
+        anonymised_df,
         spatial_col="h3_level8_index",
         time_col="creation_timestamp",
-        k=3
+        k=3,
     )
-    
-    # Save outputs
+
     final_df.to_csv(f"{output_dir}/final_anonymised_dataset.csv", index=False)
-    manual_review_df.to_csv(f"{output_dir}/manual_review_high_risk_records.csv", index=False)
-    
+    manual_review_df.to_csv(
+        f"{output_dir}/manual_review_high_risk_records.csv",
+        index=False,
+    )
+
     logger.info("Anonymisation completed and files exported")
-    
+
+
 if __name__ == "__main__":
     main()
-   
-
-
-

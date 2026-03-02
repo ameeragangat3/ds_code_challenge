@@ -1,28 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Extraction and validation utilities for challenge input datasets."""
 
-#%%
-import boto3
 import json
-import requests
 import time
 from pathlib import Path
+from typing import Any
+
+import boto3
+import requests
 import yaml
 
-from src import (CREDS_URL, AWS_BUCKET, CITY_HEX_FILE, REGION, VALIDATION_FILE)
-
+from src import AWS_BUCKET, CITY_HEX_FILE, CREDS_URL, REGION, VALIDATION_FILE
 from src.logging_config import setup_logging
+
 logger = setup_logging()
 
-def load_aws_credentials():
-    response = requests.get(CREDS_URL)
+
+def load_aws_credentials() -> dict[str, Any]:
+    """Load AWS credentials JSON used by this challenge.
+
+    Returns:
+        Parsed credentials payload.
+    """
+    response = requests.get(CREDS_URL, timeout=30)
     response.raise_for_status()
     return response.json()
 
 
-def create_s3_client():
+def create_s3_client() -> Any:
+    """Create a boto3 S3 client from downloaded challenge credentials."""
     creds = load_aws_credentials()
-
     access_key = creds["s3"]["access_key"]
     secret_key = creds["s3"]["secret_key"]
 
@@ -31,20 +39,22 @@ def create_s3_client():
         aws_secret_access_key=secret_key,
         region_name=REGION,
     )
-
     return session.client("s3")
 
 
-def extract_resolution_8_hexes_s3():
-    """
-    Use S3 Select to retrieve only resolution 8 features.
-    """
+def extract_resolution_8_hexes_s3() -> tuple[list[dict[str, Any]], float]:
+    """Extract only resolution-8 features from the combined city hex GeoJSON.
 
+    Returns:
+        A tuple of extracted feature objects and extraction runtime in seconds.
+    """
     s3 = create_s3_client()
-
     start_time = time.time()
-    
-    expression="select * from s3object[*].features[*] s where s.properties.resolution = 8"
+
+    expression = (
+        "select * from s3object[*].features[*] s "
+        "where s.properties.resolution = 8"
+    )
 
     response = s3.select_object_content(
         Bucket=AWS_BUCKET,
@@ -58,54 +68,50 @@ def extract_resolution_8_hexes_s3():
         OutputSerialization={"JSON": {}},
     )
 
-    features = []
-    buffer = ""
-    
+    features: list[dict[str, Any]] = []
+    payload_buffer = ""
+
     for event in response["Payload"]:
         if "Records" in event:
-            buffer += event["Records"]["Payload"].decode("utf-8")
-    
-    # Now safely split by newline
-    for line in buffer.strip().split("\n"):
+            payload_buffer += event["Records"]["Payload"].decode("utf-8")
+
+    # S3 Select emits newline-delimited JSON records.
+    for line in payload_buffer.strip().split("\n"):
         if line:
-            record = json.loads(line)
-            features.append(record)
+            features.append(json.loads(line))
 
     runtime = round(time.time() - start_time, 3)
-
     return features, runtime
 
 
-def download_aws_file(filename):
+def download_aws_file(filename: str) -> None:
+    """Download a file from the challenge bucket into the local ``data/`` folder."""
     output_path = Path(f"data/{filename}")
-
     if output_path.exists():
-        logger.info(f"{filename} File already exists locally.")
-    else:
-        output_path.parent.mkdir(exist_ok=True)
-        s3 = create_s3_client()
-        s3.download_file(AWS_BUCKET, filename, str(output_path))
+        logger.info("%s file already exists locally.", filename)
+        return
+
+    output_path.parent.mkdir(exist_ok=True)
+    s3 = create_s3_client()
+    s3.download_file(AWS_BUCKET, filename, str(output_path))
 
 
-def load_reference_hexes():
-    """
-    Load the resolution 8 reference dataset:
-    city-hex-polygons-8.geojson
+def load_reference_hexes() -> list[dict[str, Any]]:
+    """Load the local reference resolution-8 hex feature collection.
 
     Raises:
-        FileNotFoundError if the file does not exist.
+        FileNotFoundError: If the local reference file does not exist.
+        ValueError: If the loaded payload does not contain ``features``.
     """
-
     path = Path("data/city-hex-polygons-8.geojson")
-
     if not path.exists():
         raise FileNotFoundError(
             "city-hex-polygons-8.geojson not found in data folder. "
             "Please download it from the AWS bucket."
         )
 
-    with open(path) as f:
-        data = json.load(f)
+    with path.open("r", encoding="utf-8") as file_obj:
+        data = json.load(file_obj)
 
     if "features" not in data:
         raise ValueError("Reference file does not contain 'features' key.")
@@ -113,77 +119,71 @@ def load_reference_hexes():
     return data["features"]
 
 
-def validate_against_reference(extracted_features):
-    """
-    Validate that S3 Select extraction results match
-    the reference resolution 8 dataset exactly.
+def validate_against_reference(extracted_features: list[dict[str, Any]]) -> None:
+    """Validate extracted features against the provided reference dataset.
 
-    Checks:
-    - Feature count equality
-    - Exact index set equality
+    Args:
+        extracted_features: Features obtained from S3 Select extraction.
 
     Raises:
-        ValueError if mismatch is detected.
+        ValueError: If extracted feature index sets differ from the reference.
     """
-
     logger.info("Reference validation stage initiated")
-
     start = time.time()
+
     reference_features = load_reference_hexes()
-
-    extracted_indices = {
-        f["properties"]["index"]
-        for f in extracted_features
-    }
-
-    reference_indices = {
-        f["properties"]["index"]
-        for f in reference_features
-    }
+    extracted_indices = {feature["properties"]["index"] for feature in extracted_features}
+    reference_indices = {feature["properties"]["index"] for feature in reference_features}
 
     missing_in_extracted = reference_indices - extracted_indices
     extra_in_extracted = extracted_indices - reference_indices
 
     counts_match = len(extracted_features) == len(reference_features)
     sets_match = extracted_indices == reference_indices
-
     runtime = round(time.time() - start, 3)
 
     logger.info(
-        f"Reference comparison | "
-        f"counts_match={counts_match} | "
-        f"sets_match={sets_match} | "
-        f"missing_count={len(missing_in_extracted)} | "
-        f"extra_count={len(extra_in_extracted)} | "
-        f"runtime_seconds={runtime}"
+        "Reference comparison | counts_match=%s | sets_match=%s | missing_count=%s "
+        "| extra_count=%s | runtime_seconds=%s",
+        counts_match,
+        sets_match,
+        len(missing_in_extracted),
+        len(extra_in_extracted),
+        runtime,
     )
 
     if not sets_match:
-        raise ValueError(
-            "S3 Select extraction does not match reference dataset."
-        )
+        raise ValueError("S3 Select extraction does not match reference dataset.")
 
     logger.info("Reference validation passed")
 
-def load_schema(schema_path):
-    with open(Path(schema_path), "r") as f:
-        return json.load(f)
- 
-def validate_hex_schema(geojson_data, schema_path):
-    """
-    Validate GeoJSON hex dataset against schema rules.
-    """
 
+def load_schema(schema_path: str | Path) -> dict[str, Any]:
+    """Load schema definition used for GeoJSON conformance scoring."""
+    with Path(schema_path).open("r", encoding="utf-8") as file_obj:
+        return json.load(file_obj)
+
+
+def validate_hex_schema(
+    geojson_data: dict[str, Any],
+    schema_path: str | Path,
+) -> dict[str, Any]:
+    """Validate GeoJSON hex payload and return conformance metrics.
+
+    Args:
+        geojson_data: GeoJSON-like dictionary to validate.
+        schema_path: Path to the schema JSON file.
+
+    Returns:
+        Validation report including check counts, failures, and score.
+    """
     start_time = time.time()
-
     schema = load_schema(schema_path)
 
     total_rule_checks = 0
     total_rule_failures = 0
-    failure_breakdown = {}
+    failure_breakdown: dict[str, int] = {}
 
-    # Collection-level checks
-    # Collection type rule
     total_rule_checks += 1
     if geojson_data.get("type") != schema["collection_rules"]["type_must_be"]:
         total_rule_failures += 1
@@ -191,7 +191,6 @@ def validate_hex_schema(geojson_data, schema_path):
             failure_breakdown.get("collection_type_mismatch", 0) + 1
         )
 
-    # Features key required rule
     total_rule_checks += 1
     if schema["collection_rules"].get("features_key_required", False):
         if "features" not in geojson_data:
@@ -202,7 +201,6 @@ def validate_hex_schema(geojson_data, schema_path):
 
     features = geojson_data.get("features", [])
 
-    # Features must be list
     total_rule_checks += 1
     if not isinstance(features, list):
         total_rule_failures += 1
@@ -210,10 +208,7 @@ def validate_hex_schema(geojson_data, schema_path):
             failure_breakdown.get("features_not_list", 0) + 1
         )
 
-    # Feature-level checks
     for feature in features:
-
-        # Feature type rule
         total_rule_checks += 1
         if feature.get("type") != schema["feature_rules"]["feature_type_must_be"]:
             total_rule_failures += 1
@@ -221,7 +216,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("feature_type_invalid", 0) + 1
             )
 
-        # Geometry existence rule
         total_rule_checks += 1
         geometry = feature.get("geometry")
         if geometry is None:
@@ -231,7 +225,6 @@ def validate_hex_schema(geojson_data, schema_path):
             )
             continue
 
-        # Geometry type rule
         total_rule_checks += 1
         if geometry.get("type") != schema["geometry_rules"]["geometry_type_must_be"]:
             total_rule_failures += 1
@@ -239,7 +232,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("geometry_type_invalid", 0) + 1
             )
 
-        # Coordinates existence rule
         total_rule_checks += 1
         coordinates = geometry.get("coordinates")
         if not coordinates:
@@ -248,7 +240,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("coordinates_missing", 0) + 1
             )
 
-        # Minimum coordinate length rule
         total_rule_checks += 1
         try:
             if len(coordinates[0]) < schema["geometry_rules"]["coordinates_min_length"]:
@@ -262,7 +253,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("coordinates_structure_invalid", 0) + 1
             )
 
-        # Properties existence rule
         total_rule_checks += 1
         properties = feature.get("properties")
         if properties is None:
@@ -272,7 +262,6 @@ def validate_hex_schema(geojson_data, schema_path):
             )
             continue
 
-        # Resolution existence rule
         total_rule_checks += 1
         resolution = properties.get("resolution")
         if resolution is None:
@@ -281,7 +270,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("resolution_missing", 0) + 1
             )
 
-        # Resolution type rule
         total_rule_checks += 1
         if not isinstance(resolution, int):
             total_rule_failures += 1
@@ -289,7 +277,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("resolution_type_invalid", 0) + 1
             )
 
-        # Resolution equals rule
         total_rule_checks += 1
         if resolution != schema["property_rules"]["resolution_must_equal"]:
             total_rule_failures += 1
@@ -297,7 +284,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("resolution_value_invalid", 0) + 1
             )
 
-        # Index existence rule
         total_rule_checks += 1
         hex_index = properties.get("index")
         if hex_index is None:
@@ -306,7 +292,6 @@ def validate_hex_schema(geojson_data, schema_path):
                 failure_breakdown.get("index_missing", 0) + 1
             )
 
-        # Index type rule
         total_rule_checks += 1
         if not isinstance(hex_index, str):
             total_rule_failures += 1
@@ -315,13 +300,11 @@ def validate_hex_schema(geojson_data, schema_path):
             )
 
     total_features = len(features)
-
     conformance_score = (
         (total_rule_checks - total_rule_failures) / total_rule_checks
         if total_rule_checks > 0
         else 0
     )
-
     runtime = round(time.time() - start_time, 3)
 
     return {
@@ -332,67 +315,65 @@ def validate_hex_schema(geojson_data, schema_path):
         "failure_breakdown": failure_breakdown,
         "runtime_seconds": runtime,
     }
-   
 
-def load_yaml(path):
-    with open(path, "r") as file:
-        data = yaml.safe_load(file)
-    return data
 
-def main():
-    # load config data
-    config_data = load_yaml('config.yaml')
+def load_yaml(path: str | Path) -> dict[str, Any]:
+    """Load a YAML configuration file into a dictionary."""
+    with Path(path).open("r", encoding="utf-8") as file_obj:
+        return yaml.safe_load(file_obj)
+
+
+def main() -> None:
+    """Run extraction and validation stages as a standalone script."""
+    config_data = load_yaml("config.yaml")
 
     logger.info("Data extraction stage initiated")
-
     hex_features, extract_runtime = extract_resolution_8_hexes_s3()
-    
     logger.info(
-        f"S3 Select extraction completed | "
-        f"resolution_8_features={len(hex_features)} | "
-        f"runtime_seconds={extract_runtime}"
+        "S3 Select extraction completed | resolution_8_features=%s | "
+        "runtime_seconds=%s",
+        len(hex_features),
+        extract_runtime,
     )
 
-    logger.info(f"Extracted {len(hex_features)} resolution 8 hex features")
-    logger.info("Data extraction stage complete")    
-    
+    logger.info("Extracted %s resolution 8 hex features", len(hex_features))
+    logger.info("Data extraction stage complete")
+
     logger.info("Reference validation stage initiated")
-    
     logger.info("Download validation file city-hex-polygons-8.geojson from AWS")
     download_aws_file(VALIDATION_FILE)
-    
     validate_against_reference(hex_features)
     logger.info("Reference validation stage completed")
-    
-    
-    logger.info("Additional Validation stage initiated")
 
-    validation_geojson = {
-        "type": "FeatureCollection",
-        "features": hex_features
-    }
+    logger.info("Additional validation stage initiated")
+    validation_geojson = {"type": "FeatureCollection", "features": hex_features}
 
     report = validate_hex_schema(validation_geojson, "schemas/hex_schema.json")
-    
     logger.info(
-        f"Validation report | "
-        f"total_features={report['total_features']} | "
-        f"total_rule_checks={report['total_rule_checks']} | "
-        f"total_rule_failures={report['total_rule_failures']} | "
-        f"conformance_score={report['conformance_score']} | "
-        f"runtime_seconds={report['runtime_seconds']}"
+        "Validation report | total_features=%s | total_rule_checks=%s | "
+        "total_rule_failures=%s | conformance_score=%s | runtime_seconds=%s",
+        report["total_features"],
+        report["total_rule_checks"],
+        report["total_rule_failures"],
+        report["conformance_score"],
+        report["runtime_seconds"],
     )
-    
-    if report['failure_breakdown']:
-        logger.info(f"Failure breakdown | {report['failure_breakdown']}")
-    
-    if report['conformance_score'] < config_data['validation']['conformance_threshold']:
-        raise ValueError(f"Schema validation failed threshold, conformance score: {report['conformance_score']}")
-    else:
-        logger.info(f"Schema validation passed threshold, conformance score: {report['conformance_score']}")
-    
-    
+
+    if report["failure_breakdown"]:
+        logger.info("Failure breakdown | %s", report["failure_breakdown"])
+
+    threshold = config_data["validation"]["conformance_threshold"]
+    if report["conformance_score"] < threshold:
+        raise ValueError(
+            "Schema validation failed threshold, conformance score: "
+            f"{report['conformance_score']}"
+        )
+
+    logger.info(
+        "Schema validation passed threshold, conformance score: %s",
+        report["conformance_score"],
+    )
+
+
 if __name__ == "__main__":
     main()
-    
-
